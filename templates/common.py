@@ -4,43 +4,41 @@ Also handles Satoshi font registration with Helvetica fallback.
 Includes graceful fallbacks if ReportLab is not installed to avoid import errors
 during static analysis or partial environments.
 """
-from typing import Dict, Any
+from typing import Dict, Any, List
 import os
 import json
 import re
-try:  # Attempt real ReportLab imports (assign to local names first to avoid Final reassign warnings)
+try:  # Attempt real ReportLab imports
     from reportlab.pdfgen import canvas as _canvas_mod
     from reportlab.lib import colors as _colors_mod
     from reportlab.lib.pagesizes import A4 as _A4
     from reportlab.pdfbase import pdfmetrics as _pdfmetrics_mod
     from reportlab.pdfbase.ttfonts import TTFont as _TTFont
+    from reportlab.lib.units import inch, mm
     canvas = _canvas_mod  # type: ignore
     colors = _colors_mod  # type: ignore
     A4 = _A4  # type: ignore
     pdfmetrics = _pdfmetrics_mod  # type: ignore
     TTFont = _TTFont  # type: ignore
-except Exception:  # Fallback lightweight stubs (non-rendering) to satisfy tooling
+except Exception:  # Fallback lightweight stubs
     class _StubColors:
         white = (1, 1, 1)
-        def Color(self, r, g, b):  # mimic callable interface
-            return (r, g, b)
+        def Color(self, r, g, b): return (r, g, b)
     colors = _StubColors()  # type: ignore
     A4 = (595.275590551, 841.88976378)  # type: ignore
+    inch = 72.0  # type: ignore
+    mm = 2.834645669  # type: ignore
     class _StubPdfMetrics:
-        def registerFont(self, *a, **k):
-            pass
-        def getFont(self, name):
-            return None
+        def registerFont(self, *a, **k): pass
+        def getFont(self, name): return None
     pdfmetrics = _StubPdfMetrics()  # type: ignore
     class TTFont:  # type: ignore
-        def __init__(self, *a, **k):
-            pass
+        def __init__(self, *a, **k): pass
     class _StubText:
         def setFont(self, *a, **k): pass
         def setFillColor(self, *a, **k): pass
         def textLine(self, *a, **k): pass
         def setLeading(self, *a, **k): pass
-
     class _StubCanvas:
         def __init__(self, *a, **k): pass
         def setFillColor(self, *a, **k): pass
@@ -61,7 +59,6 @@ except Exception:  # Fallback lightweight stubs (non-rendering) to satisfy tooli
         def beginText(self, *a, **k): return _StubText()
         def drawText(self, *a, **k): pass
         def stringWidth(self, *a, **k): return 0
-
     class canvas:  # type: ignore
         Canvas = _StubCanvas
 
@@ -73,21 +70,13 @@ _SATOSHI_REGISTERED = False
 
 
 def register_satoshi_font():
-    """Attempt to register Satoshi Regular/Bold if font files exist.
-
-    Search locations:
-      - assets/fonts/Satoshi-Regular.ttf
-      - assets/fonts/Satoshi-Bold.ttf
-      - assets/Satoshi.ttf (regular)
-      - project root Satoshi.ttf (fallback)
-    """
+    """Attempt to register Satoshi Regular/Bold if font files exist."""
     global _SATOSHI_REGISTERED
     if _SATOSHI_REGISTERED:
         return
 
     candidates_regular = [
         os.path.join(ASSETS_DIR, "fonts", "Satoshi-Regular.ttf"),
-        os.path.join(ASSETS_DIR, "Satoshi.ttf"),
         os.path.abspath(os.path.join(ASSETS_DIR, "..", "Satoshi.ttf")),
     ]
     candidates_bold = [
@@ -103,8 +92,6 @@ def register_satoshi_font():
                 break
             except Exception:
                 pass
-
-    # Bold is optional
     for path in candidates_bold:
         if os.path.isfile(path):
             try:
@@ -112,16 +99,11 @@ def register_satoshi_font():
                 break
             except Exception:
                 pass
-
     _SATOSHI_REGISTERED = registered_any
 
 
 def load_brand_colors() -> Dict[str, object]:
-    """Load brand colors from JSON, ignoring any non-hex or invalid values.
-
-    Ensures that the commonly used keys exist; falls back to sensible defaults
-    derived from the new palette if missing.
-    """
+    """Load brand colors from JSON."""
     path = os.path.abspath(os.path.join(ASSETS_DIR, "brand_colors.json"))
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -144,34 +126,29 @@ def load_brand_colors() -> Dict[str, object]:
             try:
                 brand[k] = hex_to_color(v)
             except Exception:
-                # Skip non-hex or invalid mappings
                 pass
 
-    # Ensure legacy keys (used by templates) are present using new palette fallbacks
-    # Provide deterministic fallback colors as tuples if Color factory missing
-    def _fallback_color(r, g, b):
-        try:
-            return colors.Color(r, g, b)  # type: ignore[attr-defined]
-        except Exception:
-            return (r, g, b)
+    # Ensure required keys are present
     brand.setdefault("neutral_white", colors.white)
+    brand.setdefault("indigo", hex_to_color("#1e3a5f"))
+    brand.setdefault("cyan_turquoise", hex_to_color("#187f76"))
+    brand.setdefault("light_silver", hex_to_color("#d7d9db"))
+    brand.setdefault("warm_brown", brand.get("indigo")) # Fallback for old templates
 
     return brand
 
 
 def _choose_font(c: Any, size: int = 10, bold: bool = False, text_object: Any = None):
     """Prefer Satoshi (bold/regular) if registered; else Helvetica variants."""
-    # Ensure we attempted registration once
     register_satoshi_font()
-
     font_name = "Helvetica"
-    if bold and pdfmetrics.getFont("Helvetica-Bold"):
+    if bold:
         font_name = "Helvetica-Bold"
 
     try:
         if bold and pdfmetrics.getFont("Satoshi-Bold"):
             font_name = "Satoshi-Bold"
-        elif _SATOSHI_REGISTERED:
+        elif not bold and pdfmetrics.getFont("Satoshi"):
             font_name = "Satoshi"
     except KeyError:
         pass  # Fallback to Helvetica
@@ -180,207 +157,171 @@ def _choose_font(c: Any, size: int = 10, bold: bool = False, text_object: Any = 
     target.setFont(font_name, size)
 
 
-def draw_header(c: Any, brand: Dict[str, Any], title: str | None = None):
-    """Draw a sophisticated, minimal header with logo and optional title."""
+def draw_modern_header(c: Any, brand: Dict[str, Any], title: str, subtitle: str, logo_name: str = "Artboard 1.png"):
+    """Draw a modern, typography-led header.
+
+    - `title`: The main, large title (e.g., "Proposal for Partnership").
+    - `subtitle`: The smaller text above the title (e.g., "ACCESS DISCREETKIT LTD").
+    - `logo_name`: The logo file to use from `assets/logos/`.
+    """
     w, h = A4
-    
-    # Draw the logo
-    logo_path = os.path.abspath(os.path.join(ASSETS_DIR, "logos", "logo_small.png"))
+    margin_left = 1.25 * inch
+    margin_top = 1 * inch
+
+    # === Left Accent Bar ===
     try:
-        # Use a smaller, more refined logo if available
-        c.drawImage(logo_path, 40, h - 60, width=120, height=40, mask='auto')
+        c.setFillColor(brand.get("cyan_turquoise"))
+        c.rect(0, 0, 18 * mm, h, fill=1, stroke=0) # Full-height bar
     except Exception:
-        # Fallback for the original logo
-        logo_path_orig = os.path.abspath(os.path.join(ASSETS_DIR, "logo.png"))
+        pass
+
+    # === Logo (Top-Left, above title) ===
+    logo_path = os.path.abspath(os.path.join(ASSETS_DIR, "logos", logo_name))
+    try:
+        # Using Artboard 1: Color logo, blue text
+        c.drawImage(logo_path, margin_left, h - (margin_top - 10*mm), width=100, height=40, mask='auto')
+    except Exception:
+        # Fallback neutral box
         try:
-            c.drawImage(logo_path_orig, 40, h - 55, width=80, height=32, mask='auto')
-        except Exception:
             c.setFillColor(brand.get("light_silver"))
-            c.rect(40, h - 55, 80, 32, fill=1, stroke=0)
-
-    # Document title (if provided)
-    if title:
-        c.setFillColor(brand.get("indigo"))
-        _choose_font(c, 18, bold=True)
-        c.drawRightString(w - 40, h - 55, title)
-
-    # Subtle separator line
-    c.setStrokeColor(brand.get("light_silver"))
-    c.setLineWidth(0.5)
-    c.line(40, h - 80, w - 40, h - 80)
-
-
-def draw_letterhead_dynamic_content(c: Any, brand: Dict[str, Any], date: str, recipient: list[str], subject: str):
-    """Draw dynamic elements like date, recipient, and subject."""
-    w, h = A4
+            c.rect(margin_left, h - (margin_top - 10*mm), 100, 40, fill=1, stroke=0)
+        except Exception:
+            pass
     
+    # === Title Block (Inverted Hierarchy) ===
+    
+    # Subtitle (Company Name)
+    try:
+        c.setFillColor(brand.get("indigo"))
+        _choose_font(c, 10, bold=False)
+        c.drawString(margin_left, h - (margin_top + 10*mm), subtitle.upper())
+    except Exception:
+        pass
+
+    # Main Title (Document Purpose)
+    try:
+        c.setFillColor(brand.get("indigo"))
+        _choose_font(c, 28, bold=True)
+        # Position title below subtitle
+        c.drawString(margin_left, h - (margin_top + 20*mm), title)
+    except Exception:
+        pass
+    
+    # Separator Line
+    try:
+        c.setStrokeColor(brand.get("light_silver"))
+        c.setLineWidth(0.5)
+        c.line(margin_left, h - (margin_top + 25*mm), w - margin_left, h - (margin_top + 25*mm))
+    except Exception:
+        pass
+
+
+def draw_letterhead_dynamic_content(c: Any, brand: Dict[str, Any], date: str, recipient: list[str]):
+    """Draw dynamic elements: date and recipient block."""
+    w, h = A4
+    margin_left = 1.25 * inch
+    margin_top_body = 1 * inch + 35*mm # Start below the header area
+
     _choose_font(c, 10)
     c.setFillColor(brand.get("indigo"))
 
-    # Date
-    c.drawRightString(w - 40, h - 110, date)
+    # Date (Top right, aligned with body)
+    c.drawRightString(w - margin_left, h - (margin_top_body - 10*mm), date)
 
     # Recipient details
-    text = c.beginText(40, h - 140)
+    text = c.beginText(margin_left, h - margin_top_body)
     _choose_font(c, 11, text_object=text)
     text.setFillColor(brand.get("indigo"))
+    text.setLeading(14)
     for line in recipient:
         text.textLine(line)
     c.drawText(text)
 
-    # Subject line
-    subject_font_bold = "Satoshi-Bold" if pdfmetrics.getFont("Satoshi-Bold") else "Helvetica-Bold"
-    _choose_font(c, 11, bold=True)
-    c.drawString(40, h - 220, "Subject: ")
-    _choose_font(c, 11)
-    c.drawString(40 + c.stringWidth("Subject: ", subject_font_bold, 11), h - 220, subject)
 
-
-def draw_footer(c: Any, brand: Dict[str, Any]):
-    """Draw a sophisticated footer with comprehensive contact details."""
+def draw_footer_block(c: Any, brand: Dict[str, Any], address_lines: List[str], contact_lines: List[str], social_lines: List[str]):
+    """Draw a sophisticated, multi-column footer block."""
     w, h = A4
+    margin = 1.25 * inch
+    bottom_y = 1 * inch # Position of the text
+    
+    col_1_x = margin
+    col_2_x = margin + 170
+    col_3_x = margin + 340
     
     c.setFillColor(brand.get("indigo"))
-    _choose_font(c, 8)
 
-    # Footer content
-    line1 = "Access DiscreetKit Ltd | Registered in Ghana"
-    line2 = "www.discreetkit.com | info@discreetkit.com | +233 12 345 6789"
-    
-    c.drawCentredString(w / 2.0, 45, line1)
-    c.drawCentredString(w / 2.0, 30, line2)
-
-    # Subtle separator line above footer
-    c.setStrokeColor(brand.get("light_silver"))
-    c.setLineWidth(0.5)
-    c.line(40, 65, w - 40, 65)
-
-
-def _set_transparency(c: Any, alpha: float) -> None:
-    """Attempt to set drawing transparency; silently ignore if unsupported."""
     try:
-        # Newer ReportLab (>=3.5) exposes setFillAlpha / setStrokeAlpha
-        if hasattr(c, "setFillAlpha"):
-            c.setFillAlpha(alpha)
-        # Low-level PDF ExtGState fallback
-        elif hasattr(c, "_doc"):
-            # Create an ExtGState only once per alpha value
-            gs_name = f"Gs{int(alpha*100)}"
-            if not getattr(c._doc, "_extgstates", None):  # type: ignore[attr-defined]
-                c._doc._extgstates = {}  # type: ignore[attr-defined]
-            if alpha not in c._doc._extgstates:  # type: ignore[attr-defined]
-                # Define a transparency state; ReportLab internal API (best-effort)
-                c._doc._extgstates[alpha] = ("/GS{} << /ca {} /CA {} >>".format(gs_name, alpha, alpha), gs_name)  # type: ignore[attr-defined]
-            # If direct application not possible we silently ignore.
+        # Column 1: Address
+        text = c.beginText(col_1_x, bottom_y)
+        _choose_font(c, 9, bold=True, text_object=text)
+        text.textLine("Address")
+        _choose_font(c, 9, bold=False, text_object=text)
+        text.setLeading(12)
+        text.textLine("") #
+        for line in address_lines:
+            text.textLine(line)
+        c.drawText(text)
+
+        # Column 2: Contact
+        text = c.beginText(col_2_x, bottom_y)
+        _choose_font(c, 9, bold=True, text_object=text)
+        text.textLine("Contact")
+        _choose_font(c, 9, bold=False, text_object=text)
+        text.setLeading(12)
+        text.textLine("") #
+        for line in contact_lines:
+            text.textLine(line)
+        c.drawText(text)
+
+        # Column 3: Social
+        text = c.beginText(col_3_x, bottom_y)
+        _choose_font(c, 9, bold=True, text_object=text)
+        text.textLine("Follow Us")
+        _choose_font(c, 9, bold=False, text_object=text)
+        text.setLeading(12)
+        text.textLine("") #
+        for line in social_lines:
+            text.textLine(line)
+        c.drawText(text)
+    except Exception:
+        pass # Fail gracefully
+
+    # === Bottom Accent Bar ===
+    try:
+        c.setFillColor(brand.get("cyan_turquoise"))
+        c.rect(0, 0, w, 5*mm, fill=1, stroke=0) # Full-width bottom bar
     except Exception:
         pass
 
 
-def add_watermark(c: Any, brand: Dict[str, Any], opacity: float = 0.12):
-    """Draw the watermark image semi-transparently in the center of the page.
-
-    opacity: 0 (invisible) .. 1 (fully opaque). Default is a subtle 12%.
-    Provide a PNG with transparent background in assets/watermark.png.
-    """
+def add_watermark(c: Any, brand: Dict[str, Any], opacity: float = 0.06):
+    """Draw the watermark image semi-transparently in the center of the page."""
     w, h = A4
     watermark_path = os.path.abspath(os.path.join(ASSETS_DIR, "watermark.png"))
     try:
         c.saveState()
-        _set_transparency(c, max(0.0, min(opacity, 1.0)))
-        c.translate(w / 2.0 - 150, h / 2.0 - 150)
-        c.drawImage(watermark_path, 0, 0, width=300, height=300, mask='auto')
+        # Use low-level PDF ExtGState for reliable transparency
+        gs_name = f"GsAlpha{int(opacity*100)}"
+        c.setPageMark(f"/GS {gs_name} <</ca {opacity} /CA {opacity}>> BDC")
+        
+        c.translate(w / 2.0, h / 2.0)
+        c.drawImage(watermark_path, -150, -150, width=300, height=300, mask='auto')
+        
         c.restoreState()
     except Exception:
-        # no-op if watermark not available
-        pass
-
-
-def draw_modern_header(c: Any, brand: Dict[str, Any], title: str | None = None, subtitle: str | None = None, logo_name: str = "logo.png"):
-    """Draw a modern, minimal header inspired by the provided art direction.
-
-    Design notes:
-    - Left accent bar using `cyan_turquoise` for personality.
-    - Large, bold title on the left area and optional subtitle.
-    - Small logo placed top-right.
-    - Keeps spacing generous and minimal.
-    """
-    w, h = A4
-
-    # Left accent bar
-    try:
-        c.setFillColor(brand.get("cyan_turquoise"))
-        c.rect(0, h - 140, 18, 140, fill=1, stroke=0)
-    except Exception:
-        pass
-
-    # Title block
-    if title:
+        # Fallback if transparency state fails
         try:
-            c.setFillColor(brand.get("indigo"))
-            _choose_font(c, 28, bold=True)
-            # shift right from the accent bar
-            c.drawString(40, h - 70, title)
-        except Exception:
-            try:
-                c.setFillColor(brand.get("indigo"))
-                c.setFont("Helvetica-Bold", 28)
-                c.drawString(40, h - 70, title)
-            except Exception:
-                pass
-
-    # Subtitle (smaller, muted)
-    if subtitle:
-        try:
-            c.setFillColor(brand.get("light_silver"))
-            _choose_font(c, 11)
-            c.drawString(40, h - 92, subtitle)
-        except Exception:
+            c.restoreState() # Ensure state is restored even on error
+        except:
             pass
-
-    # Logo on the right (small)
-    logo_path = os.path.abspath(os.path.join(ASSETS_DIR, logo_name))
-    try:
-        c.drawImage(logo_path, w - 140, h - 90, width=100, height=40, mask='auto')
-    except Exception:
-        # try a logos/ subpath
-        logo_path2 = os.path.abspath(os.path.join(ASSETS_DIR, "logos", logo_name))
-        try:
-            c.drawImage(logo_path2, w - 140, h - 90, width=100, height=40, mask='auto')
-        except Exception:
-            # fallback neutral box
-            try:
-                c.setFillColor(brand.get("light_silver"))
-                c.rect(w - 140, h - 90, 100, 40, fill=1, stroke=0)
-            except Exception:
-                pass
-
-
-def draw_contact_strip(c: Any, brand: Dict[str, Any], contact_lines: list[str], social: list[str] | None = None):
-    """Draw a slim contact strip (often placed near the bottom or header area).
-
-    This keeps contact and social details visible without creating a heavy footer.
-    """
-    w, h = A4
-    y = 72  # vertical position for the strip
-
-    try:
-        # light separator above the strip
-        c.setStrokeColor(brand.get("light_silver"))
-        c.setLineWidth(0.5)
-        c.line(40, y + 28, w - 40, y + 28)
-
-        # contact text (left)
-        left_x = 40
-        _choose_font(c, 9)
-        c.setFillColor(brand.get("indigo"))
-        contact_text = " | ".join(contact_lines)
-        c.drawString(left_x, y + 8, contact_text)
-
-        # social (right)
-        if social:
-            social_text = " ".join(social)
-            text_width = c.stringWidth(social_text, c._fontname, 9) if hasattr(c, 'stringWidth') else 0
-            c.drawRightString(w - 40, y + 8, social_text)
-    except Exception:
-        # graceful no-op
+        # no-op if watermark not available or transparency fails
         pass
+
+
+# Deprecated functions (kept for compatibility with other templates until refactored)
+def draw_header(c: Any, brand: Dict[str, Any], title: str | None = None):
+    pass
+def draw_footer(c: Any, brand: Dict[str, Any]):
+    pass
+def draw_contact_strip(c: Any, brand: Dict[str, Any], *args, **kwargs):
+    pass

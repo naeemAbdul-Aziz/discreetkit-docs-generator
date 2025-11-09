@@ -1,4 +1,4 @@
-"""Letterhead template generator."""
+"""Letterhead template generator (Geometric Design)."""
 import os
 from typing import cast
 from datetime import datetime
@@ -7,54 +7,43 @@ try:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.colors import Color
     from reportlab.pdfgen.textobject import PDFTextObject
+    from reportlab.lib.units import inch, mm
 except Exception:
-    # Allow static analysis without reportlab installed
-    from templates.common import canvas, A4, Color, PDFTextObject  # type: ignore
+    # Allow static analysis
+    from templates.common import canvas, A4, Color, PDFTextObject, inch, mm  # type: ignore
 from templates.common import (
     load_brand_colors,
-    draw_header,
-    draw_footer,
     add_watermark,
+    draw_geometric_header,
     draw_letterhead_dynamic_content,
-    draw_modern_header,
-    draw_contact_strip,
+    draw_geometric_footer,
     _choose_font,
 )
 
 
 def generate(output_path=None):
-    """Generate a sophisticated and minimal letterhead."""
+    """Generate a sophisticated and modern letterhead."""
     brand = load_brand_colors()
     w, h = A4
     if output_path is None:
-        output_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "output", "letterhead.pdf")
+        output_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "output", "letterhead_professional.pdf")
 
     c = canvas.Canvas(output_path, pagesize=A4)
     
-    # Draw modern header and watermark
-    draw_modern_header(c, brand, title="ACCESS DISCREETKIT LTD", subtitle="Official Communication")
-    add_watermark(c, brand, opacity=0.06)
-
-    # Dynamic content
+    # === 1. Define Content ===
+    company_name = "ACCESS DISCREETKIT LTD"
+    logo_icon = "Artboard 2.png" # The teal icon
+    watermark_icon = "Artboard 8.png" # The grey icon
+    
+    subject = "Proposal for Strategic Partnership"
     current_date = datetime.now().strftime("%d %B %Y")
+    
     recipient_details = [
         "Mr. John Doe",
         "Chief Executive Officer",
         "Innovate Corp.",
         "123 Innovation Drive, Accra, Ghana"
     ]
-    subject = "Proposal for Strategic Partnership"
-    
-    draw_letterhead_dynamic_content(c, brand, current_date, recipient_details, subject)
-
-    # Body placeholder
-    _choose_font(c, 11)
-    c.setFillColor(cast(Color, brand["indigo"]))
-    
-    body_text = c.beginText(40, h - 280)
-    _choose_font(c, 11, text_object=body_text)
-    body_text.setFillColor(cast(Color, brand["indigo"]))
-    body_text.setLeading(15)
     
     body_content = [
         "Dear Mr. Doe,",
@@ -72,19 +61,49 @@ def generate(output_path=None):
         "Access DiscreetKit Ltd"
     ]
 
+    footer_address = "House No. 57, Kofi Annan East Avenue, Madina, Accra"
+    footer_email = "dscreetkit@gmail.com"
+    footer_phone = "+233 20 300 1107"
+    footer_social = "Twitter: @discreetkit | LinkedIn: /company/discreetkit"
+    
+    # === 2. Draw Document ===
+
+    # Header
+    draw_geometric_header(c, brand, 
+        company_name=company_name,
+        logo_name=logo_icon
+    )
+    
+    # Watermark (subtle, icon-only)
+    add_watermark(c, brand, opacity=0.04)
+
+    # Dynamic content (Date, Recipient, Subject)
+    # This function now returns the starting Y position for the body
+    body_start_y = draw_letterhead_dynamic_content(c, brand, current_date, recipient_details, subject)
+
+    # Body
+    margin = 1 * inch
+    
+    _choose_font(c, 11)
+    c.setFillColor(cast(Color, brand["indigo"]))
+    
+    body_text = c.beginText(margin, body_start_y)
+    _choose_font(c, 11, text_object=body_text)
+    body_text.setFillColor(cast(Color, brand["indigo"]))
+    body_text.setLeading(15)
+    
     for line in body_content:
         body_text.textLine(line)
     
     c.drawText(cast(PDFTextObject, body_text))
 
-    # Contact strip (compact footer-like area)
-    contact_lines = [
-        "House No. 57, Kofi Annan East Avenue, Madina, Accra",
-        "Email: dscreetkit@gmail.com",
-        "Phone: +233 20 300 1107",
-    ]
-    social = ["Twitter: @discreetkit", "LinkedIn: /company/discreetkit"]
-    draw_contact_strip(c, brand, contact_lines, social=social)
+    # Footer
+    draw_geometric_footer(c, brand, 
+        address=footer_address, 
+        email=footer_email,
+        phone=footer_phone,
+        social=footer_social
+    )
     
     c.showPage()
     c.save()
