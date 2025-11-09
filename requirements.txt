@@ -1,0 +1,2 @@
+reportlab>=3.6.13
+# If you use Satoshi font, no pip install needed—just place Satoshi.ttf in the project root.
