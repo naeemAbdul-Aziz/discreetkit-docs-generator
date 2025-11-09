@@ -241,50 +241,73 @@ def draw_letterhead_dynamic_content(c: Any, brand: Dict[str, Any], date: str, re
 def draw_footer_block(c: Any, brand: Dict[str, Any], address_lines: List[str], contact_lines: List[str], social_lines: List[str]):
     """Draw a sophisticated, multi-column footer block."""
     w, h = A4
+    # Use a consistent left margin and compute column widths so the
+    # footer never overflows the right edge regardless of page size.
     margin = 1.25 * inch
-    bottom_y = 1 * inch # Position of the text
-    
+    bottom_y = 1 * inch  # baseline for footer text
+
+    usable_width = w - (2 * margin)
+    # leave space for two gutters between three columns
+    gutter = 12.0
+    col_width = (usable_width - (2 * gutter)) / 3.0
+    # column left positions (respecting left margin)
     col_1_x = margin
-    col_2_x = margin + 170
-    col_3_x = margin + 340
-    
+    col_2_x = margin + col_width + gutter
+    col_3_x = margin + 2 * (col_width + gutter)
+
     c.setFillColor(brand.get("indigo"))
 
     try:
-        # Column 1: Address
-        text = c.beginText(col_1_x, bottom_y)
-        _choose_font(c, 9, bold=True, text_object=text)
-        text.textLine("Address")
-        _choose_font(c, 9, bold=False, text_object=text)
-        text.setLeading(12)
-        text.textLine("") #
-        for line in address_lines:
-            text.textLine(line)
-        c.drawText(text)
+        # Column helper: start a text object at column left and draw lines
+        def draw_column(x: float, heading: str, lines: List[str]):
+            tx = c.beginText(x, bottom_y + 8)  # offset up a little from baseline
+            _choose_font(c, 9, bold=True, text_object=tx)
+            tx.textLine(heading)
+            _choose_font(c, 8, bold=False, text_object=tx)
+            tx.setLeading(10)
+            # small spacer
+            tx.textLine("")
+            for ln in lines:
+                    try:
+                        # allow the full column width for wrapping (small safety padding)
+                        max_width = max(10, col_width - 4)
+                        if c.stringWidth(ln, "Helvetica", 8) <= max_width:
+                            tx.textLine(ln)
+                        else:
+                            # naive wrap into the column width
+                            words = ln.split()
+                            cur = words[0] if words else ""
+                            for wrd in words[1:]:
+                                test = cur + " " + wrd
+                                if c.stringWidth(test, "Helvetica", 8) <= max_width:
+                                    cur = test
+                                else:
+                                    tx.textLine(cur)
+                                    cur = wrd
+                            if cur:
+                                tx.textLine(cur)
+                    except Exception:
+                        tx.textLine(ln)
+            c.drawText(tx)
 
-        # Column 2: Contact
-        text = c.beginText(col_2_x, bottom_y)
-        _choose_font(c, 9, bold=True, text_object=text)
-        text.textLine("Contact")
-        _choose_font(c, 9, bold=False, text_object=text)
-        text.setLeading(12)
-        text.textLine("") #
+        # Column 1: Address
+        draw_column(col_1_x, "Address", address_lines)
+
+        # Column 2: Contact (show labels for clarity)
+        contact_display = []
         for line in contact_lines:
-            text.textLine(line)
-        c.drawText(text)
+            # If the line already looks like 'Email:' or contains '@', keep it
+            if "@" in line or line.lower().startswith("email") or line.lower().startswith("phone"):
+                contact_display.append(line)
+            else:
+                contact_display.append(line)
+        draw_column(col_2_x, "Contact", contact_display)
 
         # Column 3: Social
-        text = c.beginText(col_3_x, bottom_y)
-        _choose_font(c, 9, bold=True, text_object=text)
-        text.textLine("Follow Us")
-        _choose_font(c, 9, bold=False, text_object=text)
-        text.setLeading(12)
-        text.textLine("") #
-        for line in social_lines:
-            text.textLine(line)
-        c.drawText(text)
+        draw_column(col_3_x, "Follow Us", social_lines)
+
     except Exception:
-        pass # Fail gracefully
+        pass  # Fail gracefully
 
     # === Bottom Accent Bar ===
     try:
